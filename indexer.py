@@ -228,6 +228,7 @@ def get_embedding(text, model=EMBEDDING_MODEL):
         print(f"Error getting embedding for text: {e}")
         return None
 
+
 def main():
     """
     Main function to extract text from files, embed them using OpenAI API,
@@ -254,25 +255,26 @@ def main():
         # Embed the texts and store the data
         for page_num, text, page_content in page_texts:
             # First, split the text into standard chunks
-            chunks = split_text(text, file_format, max_chunk_size=5000, overlap_size=500)
-            if chunks:
-                print(f"Splitting text from {file_path} page {page_num} into {len(chunks)} chunks")
-                for chunk in chunks:
-                    vector = get_embedding(chunk)
-                    if vector:
-                        all_vectors.append(vector)
+            if False:
+                chunks = split_text(text, file_format, max_chunk_size=5000, overlap_size=0)
+                if chunks:
+                    print(f"Splitting text from {file_path} page {page_num} into {len(chunks)} chunks")
+                    for chunk in chunks:
+                        vector = get_embedding(chunk)
+                        if vector:
+                            all_vectors.append(vector)
 
-                        index_data.append({
-                            'pdf_path': file_path,
-                            'page': page_num,
-                            'text': chunk,
-                            'type': 'paragraph',  # Mark as paragraph chunk
-                            'page_content': "" # Empty for paragraph
-                        })
-                    else:
-                        print(f"Skipping chunk due to embedding error.")
-            else:
-                print(f"Skipping page {page_num} from {file_path} due to no chunks.")
+                            index_data.append({
+                                'pdf_path': file_path,
+                                'page': page_num,
+                                'text': chunk,
+                                'type': 'paragraph',  # Mark as paragraph chunk
+                                'page_content': "" # Empty for paragraph
+                            })
+                        else:
+                            print(f"Skipping chunk due to embedding error.")
+                else:
+                    print(f"Skipping page {page_num} from {file_path} due to no chunks.")
 
             # Now, extract and embed bullet point sections
             bullet_point_sections = extract_bullet_point_sections(text)

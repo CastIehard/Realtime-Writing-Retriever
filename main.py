@@ -15,6 +15,7 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 EMBEDDING_MODEL = "text-embedding-3-large"
 LLM_MODEL = "gpt-4o-mini"
 INDEX_PATH = 'Index/faiss_index.pkl'
+HIGHLIGHTED_PDF_DIR = "Highlighted_PDFs"
 
 
 def load_index(index_path):
@@ -91,9 +92,9 @@ def search_index(index, vectors, index_data, query, top_k=1):
     return results
 
 
-def highlight_and_save_pdf(original_pdf_path, text_to_highlight, page_number, output_pdf_path, max_words_to_highlight=50):
+def highlight_and_save_pdf(original_pdf_path, text_to_highlight, page_number, max_words_to_highlight=100):
     """
-    Highlights the given text in the specified page of a PDF and saves it.
+    Highlights the given text in the specified page of a PDF and saves it to a separate directory.
     Implements a robust search by finding the longest contiguous sequence of words
     from the beginning and end of the text, then connecting them.
 
@@ -102,25 +103,32 @@ def highlight_and_save_pdf(original_pdf_path, text_to_highlight, page_number, ou
         text_to_highlight (str): The text to be highlighted.
         page_number (int): The 1-based page number where the text is located.
                            (Assumes 'page' from index_data is 1-based)
-        output_pdf_path (str): Path to save the highlighted PDF.
-        max_words_to_highlight (int): Maximum number of words to highlight.  Prevents full-page highlighting.
+        max_words_to_highlight (int): Maximum number of words to highlight. Prevents full-page highlighting.
 
     Returns:
-        bool: True if highlighting and saving was successful, False otherwise.
+        str: The path to the highlighted PDF if successful, None otherwise.
     """
+    # Create the highlighted PDF directory if it doesn't exist
+    if not os.path.exists(HIGHLIGHTED_PDF_DIR):
+        os.makedirs(HIGHLIGHTED_PDF_DIR)
+
+    # Construct the output PDF path in the highlighted PDF directory
+    base, ext = os.path.splitext(os.path.basename(original_pdf_path))  # Use basename to avoid path issues
+    output_pdf_path = os.path.join(HIGHLIGHTED_PDF_DIR, f"{base}-highlighted{ext}")
+
     doc = None  # Initialize doc to None for robust error handling
     try:
         doc = fitz.open(original_pdf_path)
         if not doc:
             print(f"Error: Could not open PDF file at {original_pdf_path}")
-            return False
+            return None
 
         # PyMuPDF page numbers are 0-indexed
         page_idx = page_number - 1
         if page_idx < 0 or page_idx >= len(doc):
             print(f"Error: Invalid page number {page_number} for PDF {original_pdf_path} with {len(doc)} pages.")
             doc.close()
-            return False
+            return None
 
         page = doc.load_page(page_idx)
         text_to_highlight = text_to_highlight.strip()  # Remove leading/trailing whitespace
@@ -129,9 +137,9 @@ def highlight_and_save_pdf(original_pdf_path, text_to_highlight, page_number, ou
 
         # Check if the text is too long to highlight (potential full-page highlight)
         if num_words > max_words_to_highlight:
-            print(f"Warning: Text is too long ({num_words} words).  Refusing to highlight to prevent full-page highlighting.")
+            print(f"Warning: Text is too long ({num_words} words). Refusing to highlight to prevent full-page highlighting.")
             doc.close()
-            return False
+            return None
 
         # --- Forward Search ---
         forward_rects = []
@@ -182,7 +190,7 @@ def highlight_and_save_pdf(original_pdf_path, text_to_highlight, page_number, ou
         if not all_rects:
             print("Warning: No text found to highlight.")
             doc.close()
-            return False
+            return None
 
         # --- Highlight ---
         for inst in all_rects:
@@ -192,34 +200,50 @@ def highlight_and_save_pdf(original_pdf_path, text_to_highlight, page_number, ou
         doc.save(output_pdf_path, garbage=4, deflate=True, clean=True)
         print(f"Highlighted PDF saved as {output_pdf_path}")
         doc.close()
-        return True
+        return output_pdf_path
 
     except Exception as e:
         print(f"Error processing PDF {original_pdf_path} for highlighting: {e}")
         if doc:  # Ensure document is closed if it was opened
             doc.close()
-        return False
+        return None
 
 
 def generate_answer(query, context, model=LLM_MODEL):
     """
     Generates an answer to the query using the OpenAI LLM, given the context.
+    The LLM is instructed to provide guidance based on the code snippet and relevant guidelines.
 
     Args:
-        query (str): The query string.
-        context (str): The context string.
+        query (str): The query string (e.g., user's question about the code).
+        context (str): The context string, containing both the code snippet and relevant guidelines.
         model (str): The name of the OpenAI LLM to use.
 
     Returns:
-        str: The generated answer.
+        str: The generated answer, providing guidance or "none" if the guidelines are irrelevant.
     """
     try:
-        prompt = f"Answer the following question based on the context provided:\n\nContext:\n{context}\n\nQuestion:\n{query}\n\nAnswer:"
-        # print(f"Prompt for LLM:\n{prompt}\n") # Optional: for debugging
+        prompt = (
+            "You are a coding assistant that helps users write code that adheres to company guidelines.\n"
+            "The user will provide a code snippet and relevant guidelines. Your task is to analyze the code and guidelines, "
+            "and provide specific, actionable advice to the user based on the guidelines.\n"
+            "Focus on identifying potential violations of the guidelines in the code and suggesting concrete steps to address them.\n"
+            "If the guidelines are directly relevant to the code and can help the user improve it, provide guidance based on the guidelines. "
+            "For example, if the user is writing a function to validate travel expenses and the guidelines state 'Reimbursement is allowed for 4-star hotels or below', "
+            "and the code doesn't check the hotel star rating, you should respond with something like: 'Remember to check that the hotel is 4 stars or below in your code. I highlighted the relevant part in the PDF.'\n"
+            "If the guidelines are not relevant to the code, or if you cannot provide any specific guidance, respond with 'none'.\n"
+            "Do not provide general information or summaries of the guidelines. Only provide specific advice that is directly applicable to the code.\n"
+            "\n"
+            "Context:\n{context}\n"
+            "\n"
+            "Question:\n{query}\n"
+            "\n"
+            "Answer:"
+        )
 
         response = openai.chat.completions.create(
             model=model,
-            messages=[{"role": "user", "content": prompt}],
+            messages=[{"role": "user", "content": prompt.format(context=context, query=query)}],
             temperature=0.1,
         )
         return response.choices[0].message.content.strip()
@@ -239,7 +263,11 @@ def main():
         print("Error: Could not load the FAISS index. Exiting.")
         return
 
-    query = input("Enter your query: ")
+    #load query from exapmple_code.txt
+    query_file_path = 'example_code_2.txt'
+    with open(query_file_path, 'r') as f:
+        query = f.read().strip()
+
 
     # 1. Perform Retrieval
     results = search_index(index, vectors, index_data, query, top_k=1)
@@ -249,22 +277,17 @@ def main():
         print(f"\n--- Top Retrieval Result ---")
         print(f"Source PDF: {top_result['pdf_path']}")
         print(f"Page: {top_result['page']}")
-        print(f"Retrieved Text Snippet (first 200 chars): {top_result['text'][:200]}...\n")
+        print(f"Retrieved Information:\n\n{top_result['text']}\n")
 
         # 2. Create Highlighted PDF
         original_pdf_path = top_result['pdf_path']
         text_to_highlight = top_result['text']
         page_num_to_highlight = top_result['page']
 
-        # Construct the output PDF path (e.g., "path/to/document-highlighted.pdf")
-        base, ext = os.path.splitext(original_pdf_path)
-        output_pdf_path = f"{base}-highlighted{ext}"
+        highlighted_pdf_path = highlight_and_save_pdf(original_pdf_path, text_to_highlight, page_num_to_highlight)
 
-        print(f"Attempting to highlight text in '{original_pdf_path}' (page {page_num_to_highlight}) and save to '{output_pdf_path}'...")
-        highlight_success = highlight_and_save_pdf(original_pdf_path, text_to_highlight, page_num_to_highlight, output_pdf_path)
-
-        if highlight_success:
-            print(f"Successfully created highlighted PDF: {output_pdf_path}")
+        if highlighted_pdf_path:
+            print(f"Successfully created highlighted PDF: {highlighted_pdf_path}")
         else:
             print(f"Failed to create or save highlighted PDF for {original_pdf_path}. The original PDF was not modified.")
         print("--- End of Highlighting Process ---\n")
@@ -273,9 +296,9 @@ def main():
         context = ""
         # The loop will run once as results contains only the top_result due to top_k=1
         for i, result_item in enumerate(results):
-            context += f"Important Information: {result_item['text']}\n"
+            context += f"Highlightet Information in pdf {result_item['text']}\n"
             if result_item.get('type') == 'bullet_point' and 'page_content' in result_item:  # Added .get for safety
-                context += f"Page Content for the bulletpoint above: {result_item['page_content']}\n"
+                context += f"Page Content for the highlighted text above: {result_item['page_content']}\n"
             context += "-" * 20 + "\n"
 
         answer = generate_answer(query, context)
