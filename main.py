@@ -243,6 +243,13 @@ class MainUI:
         self.root = root
         root.title("Code Analysis and PDF Highlighting")
 
+        # Define font sizes
+        default_font_size = 10  # Assuming a default base size
+        large_font_size = default_font_size * 2
+        label_font = ("Arial", large_font_size, "bold")
+        text_font = ("Arial", large_font_size)
+
+
         # Load Index
         self.index_data, self.vectors, self.index = load_index(INDEX_PATH)
         if self.index is None:
@@ -253,31 +260,34 @@ class MainUI:
         # UI Components
 
         # LLM Response on Top Right
-        self.llm_response_label = Label(root, text="LLM Response:")
-        self.llm_response_label.grid(row=0, column=1, sticky="w")
+        self.llm_response_label = Label(root, text="LLM Response:", font=label_font)
+        self.llm_response_label.grid(row=0, column=1, sticky="w", padx=10, pady=(10,0)) # Added padding
 
-        self.llm_response_text = scrolledtext.ScrolledText(root, wrap=tk.WORD, width=40, height=10, state="disabled")
-        self.llm_response_text.grid(row=1, column=1, padx=10, pady=(10, 0), sticky="nsew")
+        self.llm_response_text = scrolledtext.ScrolledText(root, wrap=tk.WORD, width=40, height=5, state="disabled", font=text_font) # Adjusted height for larger font
+        self.llm_response_text.grid(row=1, column=1, padx=10, pady=(5, 0), sticky="nsew")
 
         # PDF Viewer below LLM Response
         self.pdf_frame = Frame(root)
-        self.pdf_frame.grid(row=2, column=1, padx=10, pady=(0, 10), sticky="nsew")
+        self.pdf_frame.grid(row=2, column=1, padx=10, pady=(5, 10), sticky="nsew")
 
-        self.pdf_viewer = PDFViewer(self.pdf_frame, width=400, height=600)
+        self.pdf_viewer = PDFViewer(self.pdf_frame, width=400, height=300) # Adjusted height
         self.pdf_viewer.pack(fill="both", expand=True)
 
         # Code Input on the Left
-        self.code_label = Label(root, text="Code Input:")
-        self.code_label.grid(row=0, column=0, sticky="w")
+        self.code_label = Label(root, text="Code Input:", font=label_font)
+        self.code_label.grid(row=0, column=0, sticky="w", padx=10, pady=(10,0)) # Added padding
 
-        self.code_input = scrolledtext.ScrolledText(root, wrap=tk.WORD, width=40, height=20)
-        self.code_input.grid(row=1, column=0, rowspan=3, padx=10, pady=10, sticky="nsew")
+        self.code_input = scrolledtext.ScrolledText(root, wrap=tk.WORD, width=40, height=10, font=text_font) # Adjusted height
+        self.code_input.grid(row=1, column=0, rowspan=3, padx=10, pady=(5, 10), sticky="nsew") # rowspan adjusted
         self.code_input.bind("<KeyRelease>", self.on_code_change)  # Trigger on code changes
 
         # Layout Configuration
-        root.grid_rowconfigure(1, weight=1)
+        root.grid_rowconfigure(1, weight=0)  # LLM response row, less weight
+        root.grid_rowconfigure(2, weight=1)  # PDF viewer row, more weight
+        root.grid_rowconfigure(3, weight=0)  # Empty row if rowspan=3 for code_input is used for spacing
         root.grid_columnconfigure(0, weight=1)
         root.grid_columnconfigure(1, weight=1)
+
 
         # Initialize PDF path and viewer
         self.pdf_path = ""  # No default PDF
@@ -296,8 +306,11 @@ class MainUI:
         code = self.code_input.get("1.0", tk.END)
         lines = code.splitlines()
         if len(lines) >= 2 and lines[-1].strip() == "" and lines[-2].strip() == "":
-            code = code.strip()
-            self.process_code(code)
+            code_to_process = code.strip()
+            if code_to_process: # Only process if there's actual code
+                self.process_code(code_to_process)
+            else: # If stripping results in empty string, treat as cleared
+                self.clear_pdf_and_response()
         elif not code.strip():  # If the code input is empty
             self.clear_pdf_and_response()
 
@@ -309,9 +322,9 @@ class MainUI:
 
     def run_analysis(self, code):
         """Runs the code analysis and updates the UI."""
-        if not code:
-            self.update_llm_response("No code provided.")
-            self.clear_pdf_and_response()
+        if not code: # Should be caught by on_code_change, but good safeguard
+            self.root.after(0, self.clear_pdf_and_response)
+            self.root.after(0, lambda: self.update_llm_response("No code provided."))
             return
 
         # 1. Perform Retrieval
@@ -334,15 +347,15 @@ class MainUI:
             highlighted_pdf_path = highlight_and_save_pdf(self.original_pdf_path, self.text_to_highlight, self.page_num_to_highlight)
 
             if highlighted_pdf_path:
-                self.update_pdf_viewer(highlighted_pdf_path, self.page_num_to_highlight -1) # Pass 0-indexed page
+                self.root.after(0, lambda: self.update_pdf_viewer(highlighted_pdf_path, self.page_num_to_highlight -1))
             else:
-                self.update_pdf_viewer(self.original_pdf_path, self.page_num_to_highlight -1) # Revert to original if highlighting fails
+                self.root.after(0, lambda: self.update_pdf_viewer(self.original_pdf_path, self.page_num_to_highlight -1))
 
-            self.update_llm_response(answer)
+            self.root.after(0, lambda: self.update_llm_response(answer))
 
         else:
-            self.update_llm_response("No relevant information found.")
-            self.clear_pdf_and_response()
+            self.root.after(0, lambda: self.update_llm_response("No relevant information found."))
+            self.root.after(0, self.clear_pdf_and_response)
 
 
     def update_pdf_viewer(self, pdf_path, page_num=0):
