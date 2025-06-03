@@ -129,7 +129,7 @@ def extract_bullet_point_sections(text, bullet_point_symbols=r"[•*-]\s+"):
     for i, match in enumerate(matches):
         start = match.start()
         # Find the next empty line after the bullet
-        next_empty = text.find('\n\n', start)
+        next_empty = text.find('\n', start)
         # Find the next bullet after this one
         next_bullet = matches[i + 1].start() if i + 1 < len(matches) else -1
 
