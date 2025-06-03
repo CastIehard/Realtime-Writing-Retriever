@@ -27,7 +27,8 @@ def extract_text_from_file(file_path, file_format):
         file_format (str): The format of the file (e.g., '.pdf', '.md').
 
     Returns:
-        list: A list of tuples, where each tuple contains (page_number, text).
+        list: A list of tuples, where each tuple contains (page_number, text, page_content).
+              page_content is the full text of the page.
 
     Raises:
         ValueError: If the file format is not supported.
@@ -40,7 +41,7 @@ def extract_text_from_file(file_path, file_format):
                     reader = PdfReader(f)
                     for page_num, page in enumerate(reader.pages):
                         text = page.extract_text()
-                        page_texts.append((page_num + 1, text))  # Page numbers are 1-based
+                        page_texts.append((page_num + 1, text, text))  # Page numbers are 1-based, text is both chunk and page content
                 print(f"Extracted {len(page_texts)} pages from {file_path}")
             except Exception as e:
                 print(f"Error extracting text from {file_path}: {e}")
@@ -51,7 +52,7 @@ def extract_text_from_file(file_path, file_format):
                 with open(file_path, 'r', encoding='utf-8') as f:
                     text = f.read()
                 print(f"Extracted {len(text)} characters from {file_path}")
-                return [(1, text)]  # Treat the entire markdown file as one page
+                return [(1, text, text)]  # Treat the entire markdown file as one page, text is both chunk and page content
             except Exception as e:
                 print(f"Error extracting text from {file_path}: {e}")
                 return []  # Return an empty list in case of an error
@@ -112,6 +113,7 @@ def split_text(text, file_format, max_chunk_size=5000, overlap_size=0):
 def extract_bullet_point_sections(text, bullet_point_symbols=r"[•*-]\s+"):
     """
     Extracts sections of text that start with a bullet point.
+    Stops at the next empty line or the next bullet point.
 
     Args:
         text (str): The text to analyze.
@@ -121,13 +123,20 @@ def extract_bullet_point_sections(text, bullet_point_symbols=r"[•*-]\s+"):
         list: A list of text sections that start with a bullet point.
     """
     bullet_point_sections = []
-    matches = re.finditer(bullet_point_symbols, text, re.MULTILINE)
+    pattern = re.compile(bullet_point_symbols, re.MULTILINE)
+    matches = list(pattern.finditer(text))
 
-    for match in matches:
+    for i, match in enumerate(matches):
         start = match.start()
-        end = text.find('\n\n', start)  # Find the next empty line
-        if end == -1:
-            end = len(text)  # If no empty line, go to the end of the text
+        # Find the next empty line after the bullet
+        next_empty = text.find('\n\n', start)
+        # Find the next bullet after this one
+        next_bullet = matches[i + 1].start() if i + 1 < len(matches) else -1
+
+        # Determine the end: the earliest of next empty line or next bullet
+        ends = [pos for pos in [next_empty, next_bullet] if pos != -1]
+        end = min(ends) if ends else len(text)
+
         bullet_point_sections.append(text[start:end].strip())
 
     return bullet_point_sections
@@ -237,13 +246,13 @@ def main():
     for file_path in file_paths:
         file_format = os.path.splitext(file_path)[1]
         page_texts = extract_text_from_file(file_path, file_format)
-
+        
         if not page_texts:
             print(f"Skipping {file_path} due to extraction errors.")
             continue
 
         # Embed the texts and store the data
-        for page_num, text in page_texts:
+        for page_num, text, page_content in page_texts:
             # First, split the text into standard chunks
             chunks = split_text(text, file_format, max_chunk_size=5000, overlap_size=500)
             if chunks:
@@ -257,7 +266,8 @@ def main():
                             'pdf_path': file_path,
                             'page': page_num,
                             'text': chunk,
-                            'type': 'paragraph'  # Mark as paragraph chunk
+                            'type': 'paragraph',  # Mark as paragraph chunk
+                            'page_content': "" # Empty for paragraph
                         })
                     else:
                         print(f"Skipping chunk due to embedding error.")
@@ -275,7 +285,8 @@ def main():
                         'pdf_path': file_path,
                         'page': page_num,
                         'text': section,
-                        'type': 'bullet_point'  # Mark as bullet point chunk
+                        'type': 'bullet_point',  # Mark as bullet point chunk
+                        'page_content': page_content # Add page content for bullet points
                     })
                 else:
                     print(f"Skipping bullet point section due to embedding error.")
