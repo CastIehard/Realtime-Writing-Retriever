@@ -1,0 +1,6 @@
+numpy
+faiss-cpu
+tqdm
+PyPDF2
+openai
+python-dotenv
