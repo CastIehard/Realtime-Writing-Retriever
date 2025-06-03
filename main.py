@@ -6,6 +6,11 @@ import openai
 from dotenv import load_dotenv
 import fitz  # PyMuPDF für PDF-Verarbeitung
 import re
+import tkinter as tk
+from tkinter import scrolledtext, filedialog, Label, Frame
+from PIL import Image, ImageTk  # Pillow library for image handling
+import io  # For handling image data in memory
+import threading  # For running tasks in the background
 
 load_dotenv()
 
@@ -17,17 +22,13 @@ LLM_MODEL = "gpt-4o-mini"
 INDEX_PATH = 'Index/faiss_index.pkl'
 HIGHLIGHTED_PDF_DIR = "Highlighted_PDFs"
 
+# Ensure the highlighted PDF directory exists
+if not os.path.exists(HIGHLIGHTED_PDF_DIR):
+    os.makedirs(HIGHLIGHTED_PDF_DIR)
+
 
 def load_index(index_path):
-    """
-    Loads the FAISS index, index data, and vectors from a file.
-
-    Args:
-        index_path (str): The path to the file containing the index.
-
-    Returns:
-        tuple: A tuple containing the index data, vectors, and the FAISS index.
-    """
+    """Loads the FAISS index, index data, and vectors from a file."""
     try:
         with open(index_path, 'rb') as f:
             index_data, vectors, index = pickle.load(f)
@@ -39,16 +40,7 @@ def load_index(index_path):
 
 
 def get_embedding(text, model=EMBEDDING_MODEL):
-    """
-    Gets the embedding for the given text using the OpenAI API.
-
-    Args:
-        text (str): The text to embed.
-        model (str): The name of the OpenAI embedding model to use.
-
-    Returns:
-        list: The embedding for the given text.
-    """
+    """Gets the embedding for the given text using the OpenAI API."""
     try:
         text = text.replace("\n", " ")
         response = openai.embeddings.create(input=[text], model=model)
@@ -59,20 +51,7 @@ def get_embedding(text, model=EMBEDDING_MODEL):
 
 
 def search_index(index, vectors, index_data, query, top_k=1):
-    """
-    Searches the FAISS index for the most similar vectors to the query vector.
-
-    Args:
-        index (faiss.Index): The FAISS index to search.
-        vectors (numpy.ndarray): The numpy array of vectors.
-        index_data (list): The list of dictionaries containing the file path, page number, and text chunk.
-        query (str): The query string.
-        top_k (int): The number of most similar vectors to retrieve.
-
-    Returns:
-        list: A list of dictionaries, where each dictionary contains the
-              pdf_path, page, text, type, and page_content for the top_k results.
-    """
+    """Searches the FAISS index for the most similar vectors to the query vector."""
     query_vector = get_embedding(query)
     if query_vector is None:
         print("Error: Could not generate embedding for the query.")
@@ -93,28 +72,10 @@ def search_index(index, vectors, index_data, query, top_k=1):
 
 
 def highlight_and_save_pdf(original_pdf_path, text_to_highlight, page_number, max_words_to_highlight=100):
-    """
-    Highlights the given text in the specified page of a PDF and saves it to a separate directory.
-    Implements a robust search by finding the longest contiguous sequence of words
-    from the beginning and end of the text, then connecting them.
-
-    Args:
-        original_pdf_path (str): Path to the original PDF file.
-        text_to_highlight (str): The text to be highlighted.
-        page_number (int): The 1-based page number where the text is located.
-                           (Assumes 'page' from index_data is 1-based)
-        max_words_to_highlight (int): Maximum number of words to highlight. Prevents full-page highlighting.
-
-    Returns:
-        str: The path to the highlighted PDF if successful, None otherwise.
-    """
-    # Create the highlighted PDF directory if it doesn't exist
-    if not os.path.exists(HIGHLIGHTED_PDF_DIR):
-        os.makedirs(HIGHLIGHTED_PDF_DIR)
-
+    """Highlights the given text in the specified page of a PDF and saves it."""
     # Construct the output PDF path in the highlighted PDF directory
-    base, ext = os.path.splitext(os.path.basename(original_pdf_path))  # Use basename to avoid path issues
-    output_pdf_path = os.path.join(HIGHLIGHTED_PDF_DIR, f"{base}-highlighted{ext}")
+
+    output_pdf_path = os.path.join(HIGHLIGHTED_PDF_DIR, "temp_pdf_highlighted.pdf")
 
     doc = None  # Initialize doc to None for robust error handling
     try:
@@ -210,18 +171,7 @@ def highlight_and_save_pdf(original_pdf_path, text_to_highlight, page_number, ma
 
 
 def generate_answer(query, context, model=LLM_MODEL):
-    """
-    Generates an answer to the query using the OpenAI LLM, given the context.
-    The LLM is instructed to provide guidance based on the code snippet and relevant guidelines.
-
-    Args:
-        query (str): The query string (e.g., user's question about the code).
-        context (str): The context string, containing both the code snippet and relevant guidelines.
-        model (str): The name of the OpenAI LLM to use.
-
-    Returns:
-        str: The generated answer, providing guidance or "none" if the guidelines are irrelevant.
-    """
+    """Generates an answer to the query using the OpenAI LLM, given the context."""
     try:
         prompt = (
             "You are a coding assistant that helps users write code that adheres to company guidelines.\n"
@@ -252,62 +202,169 @@ def generate_answer(query, context, model=LLM_MODEL):
         return "I am sorry, I could not generate an answer at this time."
 
 
-def main():
-    """
-    Main function to load the FAISS index, query it, highlight the top result in PDF,
-    and generate an answer.
-    """
-    index_data, vectors, index = load_index(INDEX_PATH)
+class PDFViewer(tk.Frame):
+    """A Tkinter frame to display a PDF page as an image."""
 
-    if index is None:
-        print("Error: Could not load the FAISS index. Exiting.")
-        return
+    def __init__(self, parent, pdf_path="", page_num=0, *args, **kwargs):
+        tk.Frame.__init__(self, parent, *args, **kwargs)
+        self.parent = parent
+        self.pdf_path = pdf_path
+        self.page_num = page_num
+        self.image_label = Label(self)
+        self.image_label.pack(fill="both", expand=True)
+        self.update_image()
 
-    #load query from exapmple_code.txt
-    query_file_path = 'example_code_2.txt'
-    with open(query_file_path, 'r') as f:
-        query = f.read().strip()
+    def update_image(self):
+        """Updates the image displayed in the frame."""
+        if not self.pdf_path or not os.path.exists(self.pdf_path):
+            self.image_label.config(image="", text="No PDF to display.")
+            self.image_label.image = None  # Clear the reference
+            return
+
+        try:
+            doc = fitz.open(self.pdf_path)
+            page = doc.load_page(self.page_num)
+            pix = page.get_pixmap()
+            img_data = pix.tobytes("png")
+            img = Image.open(io.BytesIO(img_data))
+            img = ImageTk.PhotoImage(img)
+            self.image_label.config(image=img, text="")
+            self.image_label.image = img  # Keep a reference!
+            doc.close()
+        except Exception as e:
+            self.image_label.config(image="", text=f"Error displaying PDF: {e}")
+            self.image_label.image = None
 
 
-    # 1. Perform Retrieval
-    results = search_index(index, vectors, index_data, query, top_k=1)
+class MainUI:
+    """Main UI class for the application."""
 
-    if results:
-        top_result = results[0]
-        print(f"\n--- Top Retrieval Result ---")
-        print(f"Source PDF: {top_result['pdf_path']}")
-        print(f"Page: {top_result['page']}")
-        print(f"Retrieved Information:\n\n{top_result['text']}\n")
+    def __init__(self, root):
+        self.root = root
+        root.title("Code Analysis and PDF Highlighting")
 
-        # 2. Create Highlighted PDF
-        original_pdf_path = top_result['pdf_path']
-        text_to_highlight = top_result['text']
-        page_num_to_highlight = top_result['page']
+        # Load Index
+        self.index_data, self.vectors, self.index = load_index(INDEX_PATH)
+        if self.index is None:
+            print("Error: Could not load the FAISS index. Exiting.")
+            root.destroy()  # Close the window if index loading fails
+            return
 
-        highlighted_pdf_path = highlight_and_save_pdf(original_pdf_path, text_to_highlight, page_num_to_highlight)
+        # UI Components
 
-        if highlighted_pdf_path:
-            print(f"Successfully created highlighted PDF: {highlighted_pdf_path}")
+        # LLM Response on Top Right
+        self.llm_response_label = Label(root, text="LLM Response:")
+        self.llm_response_label.grid(row=0, column=1, sticky="w")
+
+        self.llm_response_text = scrolledtext.ScrolledText(root, wrap=tk.WORD, width=40, height=10, state="disabled")
+        self.llm_response_text.grid(row=1, column=1, padx=10, pady=(10, 0), sticky="nsew")
+
+        # PDF Viewer below LLM Response
+        self.pdf_frame = Frame(root)
+        self.pdf_frame.grid(row=2, column=1, padx=10, pady=(0, 10), sticky="nsew")
+
+        self.pdf_viewer = PDFViewer(self.pdf_frame, width=400, height=600)
+        self.pdf_viewer.pack(fill="both", expand=True)
+
+        # Code Input on the Left
+        self.code_label = Label(root, text="Code Input:")
+        self.code_label.grid(row=0, column=0, sticky="w")
+
+        self.code_input = scrolledtext.ScrolledText(root, wrap=tk.WORD, width=40, height=20)
+        self.code_input.grid(row=1, column=0, rowspan=3, padx=10, pady=10, sticky="nsew")
+        self.code_input.bind("<KeyRelease>", self.on_code_change)  # Trigger on code changes
+
+        # Layout Configuration
+        root.grid_rowconfigure(1, weight=1)
+        root.grid_columnconfigure(0, weight=1)
+        root.grid_columnconfigure(1, weight=1)
+
+        # Initialize PDF path and viewer
+        self.pdf_path = ""  # No default PDF
+        self.pdf_viewer.pdf_path = self.pdf_path
+        self.pdf_viewer.update_image()
+
+        self.original_pdf_path = ""  # Store the original path
+        self.text_to_highlight = ""  # Initialize text to highlight
+        self.page_num_to_highlight = 0  # Initialize page number
+
+        # Initialize the LLM response
+        self.llm_response = ""
+
+    def on_code_change(self, event=None):
+        """Handles changes in the code input."""
+        code = self.code_input.get("1.0", tk.END)
+        lines = code.splitlines()
+        if len(lines) >= 2 and lines[-1].strip() == "" and lines[-2].strip() == "":
+            code = code.strip()
+            self.process_code(code)
+        elif not code.strip():  # If the code input is empty
+            self.clear_pdf_and_response()
+
+
+    def process_code(self, code):
+        """Processes the code, retrieves information, and updates the UI."""
+        # Run this in a separate thread to prevent UI from freezing
+        threading.Thread(target=self.run_analysis, args=(code,), daemon=True).start()
+
+    def run_analysis(self, code):
+        """Runs the code analysis and updates the UI."""
+        if not code:
+            self.update_llm_response("No code provided.")
+            self.clear_pdf_and_response()
+            return
+
+        # 1. Perform Retrieval
+        results = search_index(self.index, self.vectors, self.index_data, code, top_k=1)
+
+        if results:
+            top_result = results[0]
+            self.original_pdf_path = top_result['pdf_path']
+            self.text_to_highlight = top_result['text']
+            self.page_num_to_highlight = top_result['page']
+
+            # 2. Generate Answer using LLM
+            context = f"Highlighted Information in pdf: {self.text_to_highlight}\n"
+            if top_result.get('type') == 'bullet_point' and 'page_content' in top_result:
+                context += f"Page Content for the highlighted text above: {top_result['page_content']}\n"
+
+            answer = generate_answer(code, context)
+
+            # 3. Highlight PDF and Update UI
+            highlighted_pdf_path = highlight_and_save_pdf(self.original_pdf_path, self.text_to_highlight, self.page_num_to_highlight)
+
+            if highlighted_pdf_path:
+                self.update_pdf_viewer(highlighted_pdf_path, self.page_num_to_highlight -1) # Pass 0-indexed page
+            else:
+                self.update_pdf_viewer(self.original_pdf_path, self.page_num_to_highlight -1) # Revert to original if highlighting fails
+
+            self.update_llm_response(answer)
+
         else:
-            print(f"Failed to create or save highlighted PDF for {original_pdf_path}. The original PDF was not modified.")
-        print("--- End of Highlighting Process ---\n")
+            self.update_llm_response("No relevant information found.")
+            self.clear_pdf_and_response()
 
-        # 3. Generate Answer using LLM (based on the retrieved text)
-        context = ""
-        # The loop will run once as results contains only the top_result due to top_k=1
-        for i, result_item in enumerate(results):
-            context += f"Highlightet Information in pdf {result_item['text']}\n"
-            if result_item.get('type') == 'bullet_point' and 'page_content' in result_item:  # Added .get for safety
-                context += f"Page Content for the highlighted text above: {result_item['page_content']}\n"
-            context += "-" * 20 + "\n"
 
-        answer = generate_answer(query, context)
-        print("\n--- Generated Answer ---")
-        print(answer)
-        print("--- End of Answer ---")
-    else:
-        print("No results found for your query.")
+    def update_pdf_viewer(self, pdf_path, page_num=0):
+        """Updates the PDF viewer with the new PDF path and page number."""
+        self.pdf_viewer.pdf_path = pdf_path
+        self.pdf_viewer.page_num = page_num
+        self.pdf_viewer.update_image()
+
+    def update_llm_response(self, response):
+        """Updates the LLM response text in the UI."""
+        self.llm_response_text.config(state="normal")  # Enable editing
+        self.llm_response_text.delete("1.0", tk.END)  # Clear previous text
+        self.llm_response_text.insert(tk.END, response)  # Insert new text
+        self.llm_response_text.config(state="disabled")  # Disable editing
+
+    def clear_pdf_and_response(self):
+        """Clears the PDF viewer and LLM response."""
+        self.update_pdf_viewer("", 0)
+        self.update_llm_response("")
 
 
 if __name__ == "__main__":
-    main()
+    root = tk.Tk()
+    ui = MainUI(root)
+    root.mainloop()

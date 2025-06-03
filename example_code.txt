@@ -1,6 +1,0 @@
-pdf = load_pdf("Hotelrechnung.pdf")
-
-flight_class = extract_flight_class(pdf)
-
-if flight_class == "economy":
-    print("OK")

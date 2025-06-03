@@ -5,3 +5,4 @@ PyPDF2
 openai
 python-dotenv
 PyMuPDF
+Pillow
