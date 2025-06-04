@@ -243,8 +243,7 @@ class MainUI:
         self.root = root
         root.title("Code Analysis and PDF Highlighting")
 
-        # Define font sizes
-        default_font_size = 10  # Assuming a default base size
+        default_font_size = 10
         large_font_size = default_font_size * 2
         label_font = ("Arial", large_font_size, "bold")
         text_font = ("Arial", large_font_size)
