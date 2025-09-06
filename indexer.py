@@ -12,10 +12,19 @@ load_dotenv()
 
 # OpenAI API Key
 openai.api_key = os.getenv("OPENAI_API_KEY")
+if openai.api_key:
+    print("OpenAI API key found.")
+else:
+    print("Error: OpenAI API key not found. Make sure it's set in your .env file.")
 
 EMBEDDING_MODEL = "text-embedding-3-large"
 FILES_PATH = 'Docs'
 INDEX_PATH = 'Index/faiss_index.pkl'
+
+# --- Configuration ---
+PROCESS_PARAGRAPHS = True
+PROCESS_BULLET_POINTS = True
+# ---------------------
 
 
 def extract_text_from_file(file_path, file_format):
@@ -60,7 +69,7 @@ def extract_text_from_file(file_path, file_format):
             raise ValueError(f"Unsupported file format: {file_format}")
 
 
-def split_text(text, file_format, max_chunk_size=5000, overlap_size=0):
+def split_text(text, file_format, max_chunk_size=1000, overlap_size=100):
     """
     Splits the text into smaller chunks based on the file format,
     considering headers and bullet points.
@@ -90,9 +99,28 @@ def split_text(text, file_format, max_chunk_size=5000, overlap_size=0):
         return new_chunks
 
     if file_format == '.pdf':
-        chunks = re.split(r'\n\d+\s', text)# First split by big headers
-        if any(len(chunk) > max_chunk_size for chunk in chunks):# Then split by sub headers if the chunks are still too big
-            chunks = further_split(chunks, r'\n\d+\.\d+\s')
+        # First try to split by numbered sections (1. 2. 3. etc.)
+        numbered_pattern = r'\n(?=\d+\.\s)'
+        chunks = re.split(numbered_pattern, text)
+        
+        # Clean up chunks and filter out very short ones
+        chunks = [chunk.strip() for chunk in chunks if chunk.strip() and len(chunk.strip()) > 20]
+        
+        # If no numbered sections found, try other patterns
+        if len(chunks) <= 1:
+            # Try double newlines (paragraph breaks)
+            chunks = text.split('\n\n')
+            chunks = [chunk.strip() for chunk in chunks if chunk.strip() and len(chunk.strip()) > 20]
+            
+        # If still only one chunk, try single newlines
+        if len(chunks) <= 1:
+            chunks = text.split('\n')
+            chunks = [chunk.strip() for chunk in chunks if chunk.strip() and len(chunk.strip()) > 20]
+            
+        # If chunks are still too big, split them further
+        if any(len(chunk) > max_chunk_size for chunk in chunks):
+            chunks = further_split(chunks, r'\n')
+            
     elif file_format == '.md':
         chunks = text.split('# ')
         if any(len(chunk) > max_chunk_size for chunk in chunks):
@@ -100,13 +128,18 @@ def split_text(text, file_format, max_chunk_size=5000, overlap_size=0):
         if any(len(chunk) > max_chunk_size for chunk in chunks):
             chunks = further_split(chunks, '\n')
 
+    # Final cleanup and size check
     final_chunks = []
     for chunk in chunks:
-        if len(chunk) > max_chunk_size:
-            for i in range(0, len(chunk), max_chunk_size - overlap_size):
-                final_chunks.append(chunk[i:i + max_chunk_size])
-        else:
-            final_chunks.append(chunk)
+        chunk = chunk.strip()
+        if len(chunk) > 20:  # Only keep meaningful chunks
+            if len(chunk) > max_chunk_size:
+                # Split large chunks
+                for i in range(0, len(chunk), max_chunk_size - overlap_size):
+                    final_chunks.append(chunk[i:i + max_chunk_size])
+            else:
+                final_chunks.append(chunk)
+    
     return final_chunks
 
 
@@ -255,43 +288,45 @@ def main():
         # Embed the texts and store the data
         for page_num, text, page_content in page_texts:
             # First, split the text into standard chunks
-            if False:
+            if PROCESS_PARAGRAPHS:
                 chunks = split_text(text, file_format, max_chunk_size=5000, overlap_size=0)
                 if chunks:
                     print(f"Splitting text from {file_path} page {page_num} into {len(chunks)} chunks")
                     for chunk in chunks:
-                        vector = get_embedding(chunk)
-                        if vector:
-                            all_vectors.append(vector)
+                        if chunk.strip():  # Only process non-empty chunks
+                            vector = get_embedding(chunk)
+                            if vector:
+                                all_vectors.append(vector)
 
-                            index_data.append({
-                                'pdf_path': file_path,
-                                'page': page_num,
-                                'text': chunk,
-                                'type': 'paragraph',  # Mark as paragraph chunk
-                                'page_content': "" # Empty for paragraph
-                            })
-                        else:
-                            print(f"Skipping chunk due to embedding error.")
+                                index_data.append({
+                                    'pdf_path': file_path,
+                                    'page': page_num,
+                                    'text': chunk,
+                                    'type': 'paragraph',  # Mark as paragraph chunk
+                                    'page_content': page_content # Add page content for paragraph
+                                })
+                            else:
+                                print(f"Skipping chunk due to embedding error.")
                 else:
                     print(f"Skipping page {page_num} from {file_path} due to no chunks.")
 
             # Now, extract and embed bullet point sections
-            bullet_point_sections = extract_bullet_point_sections(text)
-            print(f"Extracted {len(bullet_point_sections)} bullet point sections from {file_path} page {page_num}")
-            for section in bullet_point_sections:
-                vector = get_embedding(section)
-                if vector:
-                    all_vectors.append(vector)
-                    index_data.append({
-                        'pdf_path': file_path,
-                        'page': page_num,
-                        'text': section,
-                        'type': 'bullet_point',  # Mark as bullet point chunk
-                        'page_content': page_content # Add page content for bullet points
-                    })
-                else:
-                    print(f"Skipping bullet point section due to embedding error.")
+            if PROCESS_BULLET_POINTS:
+                bullet_point_sections = extract_bullet_point_sections(text)
+                print(f"Extracted {len(bullet_point_sections)} bullet point sections from {file_path} page {page_num}")
+                for section in bullet_point_sections:
+                    vector = get_embedding(section)
+                    if vector:
+                        all_vectors.append(vector)
+                        index_data.append({
+                            'pdf_path': file_path,
+                            'page': page_num,
+                            'text': section,
+                            'type': 'bullet_point',  # Mark as bullet point chunk
+                            'page_content': page_content # Add page content for bullet points
+                        })
+                    else:
+                        print(f"Skipping bullet point section due to embedding error.")
 
     if not all_vectors:
         print("No vectors created. Check your documents and embedding process. Exiting.")

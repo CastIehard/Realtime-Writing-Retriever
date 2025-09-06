@@ -174,19 +174,19 @@ def generate_answer(query, context, model=LLM_MODEL):
     """Generates an answer to the query using the OpenAI LLM, given the context."""
     try:
         prompt = (
-            "You are a coding assistant that helps users write code that adheres to company guidelines.\n"
-            "The user will provide a code snippet and relevant guidelines. Your task is to analyze the code and guidelines, "
-            "and provide specific, actionable advice to the user based on the guidelines.\n"
-            "Focus on identifying potential violations of the guidelines in the code and suggesting concrete steps to address them.\n"
-            "If the guidelines are directly relevant to the code and can help the user improve it, provide guidance based on the guidelines. "
-            "For example, if the user is writing a function to validate travel expenses and the guidelines state 'Reimbursement is allowed for 4-star hotels or below', "
-            "and the code doesn't check the hotel star rating, you should respond with something like: 'Remember to check that the hotel is 4 stars or below in your code. I highlighted the relevant part in the PDF.'\n"
-            "If the guidelines are not relevant to the code, or if you cannot provide any specific guidance, respond with 'none'.\n"
-            "Do not provide general information or summaries of the guidelines. Only provide specific advice that is directly applicable to the code.\n"
+            "You are a helpful assistant that provides relevant information from documents based on what the user is writing.\n"
+            "The user will provide some text they are writing, and you have access to relevant information from their documents. "
+            "Your task is to analyze the text and provide specific, actionable advice based on the relevant information.\n"
+            "Focus on providing helpful guidance that is directly applicable to what the user is writing.\n"
+            "If the information from the documents is directly relevant and can help the user, provide guidance based on that information. "
+            "For example, if the user is writing about a specific topic and the documents contain guidelines or best practices for that topic, "
+            "highlight the relevant information and suggest how it applies to their writing.\n"
+            "If the information is not relevant to what the user is writing, or if you cannot provide any specific guidance, respond with 'none'.\n"
+            "Do not provide general information or summaries. Only provide specific advice that is directly applicable to the user's text.\n"
             "\n"
-            "Context:\n{context}\n"
+            "Context from documents:\n{context}\n"
             "\n"
-            "Question:\n{query}\n"
+            "User's text:\n{query}\n"
             "\n"
             "Answer:"
         )
@@ -273,7 +273,7 @@ class MainUI:
         self.pdf_viewer.pack(fill="both", expand=True)
 
         # Code Input on the Left
-        self.code_label = Label(root, text="Code Input:", font=label_font)
+        self.code_label = Label(root, text="Input:", font=label_font)
         self.code_label.grid(row=0, column=0, sticky="w", padx=10, pady=(10,0)) # Added padding
 
         self.code_input = scrolledtext.ScrolledText(root, wrap=tk.WORD, width=40, height=10, font=text_font) # Adjusted height

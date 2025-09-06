@@ -1,4 +1,6 @@
-# GuidanceEngine
+# Realtime-Writing-Retriever
+
+![Example Image](example.png)
 
 This project automatically retrieves relevant information from your documents and guidelines as you write. When you enter text into the application, it uses AI-powered search and language models to find and highlight the most applicable rules or advice from your documents (such as PDFs or markdown files). For example, if you’re drafting a report, writing a technical document, or even coding, the tool will surface related guidelines or best practices—without you needing to search manually. This helps ensure your work adheres to standards and leverages the right information.
 
